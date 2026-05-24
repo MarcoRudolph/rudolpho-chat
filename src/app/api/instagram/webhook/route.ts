@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/drizzle';
 import { instagramDmPending } from '@/drizzle/schema/instagram';
 import { recordInstagramMessage, type StoredMessageInput } from '@/lib/instagram/dmPipeline';
+import { verifyInstagramWebhookChallenge } from '@/lib/instagram/webhookVerify';
 
 export const runtime = 'nodejs';
 
@@ -154,38 +155,44 @@ export async function GET(request: NextRequest) {
   const verifyToken = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
 
-  const expectedVerifyToken =
-    process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN || process.env.META_WEBHOOK_VERIFY_TOKEN;
+  const verification = verifyInstagramWebhookChallenge({
+    mode,
+    verifyToken,
+    challenge,
+  });
 
   console.log('Instagram webhook verification request', {
     mode: mode || null,
     hasVerifyToken: Boolean(verifyToken),
     hasChallenge: Boolean(challenge),
-    hasExpectedVerifyToken: Boolean(expectedVerifyToken),
+    tokenSource: verification.tokenSource,
   });
 
-  if (!expectedVerifyToken) {
+  if (verification.ok) {
+    console.log('Instagram webhook verification succeeded', {
+      tokenSource: verification.tokenSource,
+    });
+    return new NextResponse(verification.challenge, {
+      status: 200,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+  }
+
+  if (verification.reason === 'missing_server_verify_token') {
     console.error('Instagram webhook verification failed: missing server verify token');
     return NextResponse.json(
       { error: 'Webhook verify token is not configured on server' },
-      { status: 500 }
+      { status: verification.status }
     );
-  }
-
-  if (mode === 'subscribe' && verifyToken === expectedVerifyToken && challenge) {
-    console.log('Instagram webhook verification succeeded');
-    return new NextResponse(challenge, {
-      status: 200,
-      headers: { 'Content-Type': 'text/plain' },
-    });
   }
 
   console.error('Instagram webhook verification failed: token mismatch or invalid mode', {
     mode: mode || null,
-    tokenMatch: Boolean(verifyToken && expectedVerifyToken && verifyToken === expectedVerifyToken),
-    hasChallenge: Boolean(challenge),
+    tokenSource: verification.tokenSource,
+    tokenMatch: verification.tokenMatch,
+    hasChallenge: verification.hasChallenge,
   });
-  return NextResponse.json({ error: 'Webhook verification failed' }, { status: 403 });
+  return NextResponse.json({ error: 'Webhook verification failed' }, { status: verification.status });
 }
 
 /**
