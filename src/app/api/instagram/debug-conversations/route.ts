@@ -48,22 +48,37 @@ function parseLimit(value: string | null, fallback: number, max: number): number
   return Math.min(Math.max(Math.trunc(parsed), 1), max);
 }
 
-function toIso(value: Date | null | undefined): string | null {
-  return value instanceof Date ? value.toISOString() : null;
+function toIso(value: Date | string | null | undefined): string | null {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'string') return value;
+  return null;
+}
+
+function errorDetail(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const cause = (error as Error & { cause?: unknown }).cause;
+  const causeMessage =
+    cause && typeof cause === 'object' && 'message' in cause
+      ? String((cause as { message?: unknown }).message || '')
+      : '';
+  return causeMessage && !error.message.includes(causeMessage)
+    ? `${error.message}; cause: ${causeMessage}`
+    : error.message;
 }
 
 export async function GET(request: NextRequest) {
   const startedAt = new Date().toISOString();
-  const authError = requireInternalApiKey(request, {
-    secrets: [
-      process.env.INSTAGRAM_DEBUG_KEY,
-      process.env.META_DEBUG_KEY,
-      process.env.INTERNAL_API_SECRET,
-      process.env.ADMIN_SECRET,
-    ],
-    context: 'instagram debug',
-  });
-  if (authError) return authError;
+  try {
+    const authError = requireInternalApiKey(request, {
+      secrets: [
+        process.env.INSTAGRAM_DEBUG_KEY,
+        process.env.META_DEBUG_KEY,
+        process.env.INTERNAL_API_SECRET,
+        process.env.ADMIN_SECRET,
+      ],
+      context: 'instagram debug',
+    });
+    if (authError) return authError;
 
   if (!resolvePostgresUrl()) {
     return NextResponse.json(
@@ -260,4 +275,16 @@ export async function GET(request: NextRequest) {
       keyQuery: 'key',
     },
   });
+  } catch (error) {
+    const detail = errorDetail(error);
+    console.error('Instagram debug conversations route error:', { startedAt, detail });
+    return NextResponse.json(
+      {
+        startedAt,
+        error: 'debug_conversations_failed',
+        detail,
+      },
+      { status: 500 }
+    );
+  }
 }

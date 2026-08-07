@@ -12,12 +12,31 @@ import { requireInternalApiKey } from '@/lib/security/internalApiAuth';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function toIso(value: Date | null | undefined): string | null {
-  return value instanceof Date ? value.toISOString() : null;
+function toIso(value: Date | string | null | undefined): string | null {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'string') return value;
+  return null;
 }
 
-function msSince(value: Date | null | undefined): number | null {
-  return value instanceof Date ? Date.now() - value.getTime() : null;
+function msSince(value: Date | string | null | undefined): number | null {
+  if (value instanceof Date) return Date.now() - value.getTime();
+  if (typeof value === 'string') {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? Date.now() - timestamp : null;
+  }
+  return null;
+}
+
+function errorDetail(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const cause = (error as Error & { cause?: unknown }).cause;
+  const causeMessage =
+    cause && typeof cause === 'object' && 'message' in cause
+      ? String((cause as { message?: unknown }).message || '')
+      : '';
+  return causeMessage && !error.message.includes(causeMessage)
+    ? `${error.message}; cause: ${causeMessage}`
+    : error.message;
 }
 
 export async function GET(request: NextRequest) {
@@ -232,7 +251,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorDetail(error);
     console.error('Debug-health route error:', { message, startedAt });
     return NextResponse.json(
       {

@@ -7,9 +7,13 @@ function resolveBaseUrl(env) {
   return raw.endsWith("/") ? raw.slice(0, -1) : raw;
 }
 
-export async function fetch(request, env, ctx) {
+async function openNextFetch(request, env, ctx) {
   const mod = await import("./.open-next/worker.js");
   return mod.default.fetch(request, env, ctx);
+}
+
+export async function fetch(request, env, ctx) {
+  return openNextFetch(request, env, ctx);
 }
 
 export async function scheduled(event, env, ctx) {
@@ -25,13 +29,17 @@ export async function scheduled(event, env, ctx) {
   ctx.waitUntil(
     (async () => {
       try {
-        const response = await globalThis.fetch(url, {
-          method: "POST",
-          headers: {
-            "x-cron-secret": cronSecret,
-            "user-agent": "cloudflare-scheduled-instagram-processor",
-          },
-        });
+        const response = await openNextFetch(
+          new Request(url, {
+            method: "POST",
+            headers: {
+              "x-cron-secret": cronSecret,
+              "user-agent": "cloudflare-scheduled-instagram-processor",
+            },
+          }),
+          env,
+          ctx
+        );
         const body = await response.text();
         console.log("[scheduled] process-pending response", {
           schedule: event.cron,
